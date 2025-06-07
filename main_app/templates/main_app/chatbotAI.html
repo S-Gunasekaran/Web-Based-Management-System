@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Webzy Chatbot</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-900 text-white font-sans h-screen flex flex-col justify-center items-center">
+
+  <div style="background-color: rgba(60, 22, 22, 0.735);" class="w-full max-w-md p-6 rounded-2xl shadow-2xl">
+    <h2 class="text-xl font-bold mb-2 text-center text-pink-100">Webzy - AI Assistant</h2>
+    <div id="response" style="color: white;" class="text-lg mb-4 h-20 overflow-y-auto"></div>
+    <input type="text" id="userInput" placeholder="Ask something..." class="w-full p-2 rounded bg-gray-700 text-white mb-4 focus:outline-none"/>
+    <div class="flex justify-between items-center">
+      <button onclick="sendMessage()" class="bg-pink-500 px-4 py-2 rounded hover:bg-pink-600">Send</button>
+      <button onclick="startVoiceRecognition()" class="bg-blue-500 px-4 py-2 rounded hover:bg-blue-600">Speak</button>
+    </div>
+  </div>
+
+  <script>
+ // Function to send text input to the backend
+ window.speechSynthesis.cancel();
+
+ let isChatbotShutdown = false;
+    async function sendMessage() {
+      const inputField = document.getElementById("userInput");
+      const responseDiv = document.getElementById("response");
+      const userMessage = inputField.value.trim().toLowerCase();
+ if (!userMessage) {
+        responseDiv.innerText = "Please enter a message.";
+        return;
+      }
+ // Stop speaking immediately if "stop" or "exit" is typed
+ if (userMessage === "stop" || userMessage === "exit") {
+    window.speechSynthesis.cancel();
+    responseDiv.innerText = "Speech stopped. You can type a new command.";
+    return;
+  }
+
+  responseDiv.innerText = "Processing...";
+  inputField.value = "";
+
+  try {
+    const res = await fetch("/chatbot/reply/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCSRFToken()  // Ensure CSRF token is included
+      },
+      body: JSON.stringify({ message: userMessage })
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+
+        const data = await res.json();
+        const reply = data.reply;
+
+        // Handle shutdown command from backend too
+    if (reply.toLowerCase().includes("program has stopped")) {
+      isChatbotShutdown = true;
+      responseDiv.innerText = "Webzy is shutting down.";
+      speakText("Webzy is shutting down.");
+      inputField.disabled = true;
+      return;
+    }
+
+        // Display the chatbot's response
+        responseDiv.innerText = reply;
+
+        // Speak the chatbot's response
+        speakText(reply);
+      } catch (err) {
+        console.error("Error fetching response:", err);
+        responseDiv.innerText = "Error getting response. Please try again.";
+      }
+    }
+
+    // Function to get CSRF token from cookies
+    function getCSRFToken() {
+      const cookies = document.cookie.split(';');
+      for (let cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'csrftoken') {
+          return value;
+        }
+      }
+      console.warn("CSRF token not found in cookies.");
+      return '';
+    }
+
+    // Function to start voice recognition
+    async function startVoiceRecognition() {
+      const responseDiv = document.getElementById("response");
+      responseDiv.innerText = "Listening... Please speak.";
+      //to trigger the voice recognition 
+     // document.getElementById("micButton").addEventListener("click", startVoiceRecognition);
+
+      try {
+        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        recognition.lang = "en-US";
+
+        recognition.onresult = async (event) => {
+          const userMessage = event.results[0][0].transcript;
+          if (isChatbotShutdown || ["exit", "stop"].includes(userMessage.toLowerCase())) {
+  responseDiv.innerText = "Webzy is shutting down.";
+  speakText("Webzy is shutting down.");
+  isChatbotShutdown = true;
+  document.getElementById("userInput").disabled = true;
+  return;
+}
+          console.log("Recognized speech:", userMessage);
+
+          // Display the recognized speech in the input field
+          document.getElementById("userInput").value = userMessage;
+
+          // Send the recognized speech to the backend
+          responseDiv.innerText = "Processing...";
+          const res = await fetch("/chatbot/reply/", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRFToken": getCSRFToken()
+            },
+            body: JSON.stringify({ message: userMessage })
+          });
+
+          if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+          }
+
+          const data = await res.json();
+          const reply = data.reply;
+
+          // Display the chatbot's response
+          responseDiv.innerText = reply;
+
+          // Speak the chatbot's response
+          speakText(reply);
+          // ✅ Add this condition here
+          /**if (reply.toLowerCase().includes("program has stopped")) {
+            alert("The assistant is shutting down.");
+            document.getElementById("userInput").disabled = true;
+          }**/
+        };
+
+        recognition.onerror = (event) => {
+          console.error("Speech recognition error:", event.error);
+          responseDiv.innerText = "Error recognizing speech. Please try again.";
+        };
+
+        recognition.start();
+      } catch (err) {
+        console.error("Speech recognition not supported:", err);
+        responseDiv.innerText = "Speech recognition is not supported in this browser.";
+      }
+    }
+
+    // Function to speak text using the browser's SpeechSynthesis API
+    function speakText(text) {
+      const synth = window.speechSynthesis;
+      synth.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "en-US";
+      synth.speak(utterance);
+    }
+
+    // Function to handle Enter key press for submitting the input
+  document.getElementById('userInput').addEventListener('keypress', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();  // Prevent form submission
+      sendMessage();  // Trigger sendMessage() when Enter is pressed
+    }
+  });
+
+recognition.continuous = false;
+recognition.interimResults = false;
+
+
+
+  // Initial speech when the page loads
+  window.onload = function () {
+    speakText("Hello, I am Webzy, your AI assistant. How can I assist you today?");
+  };
+  </script>
+</body>
+</html>
